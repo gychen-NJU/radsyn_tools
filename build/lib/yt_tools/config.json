@@ -1,0 +1,23 @@
+{
+    "folder": "./data/",
+    "fields_list": [
+        "rho",
+        "e",
+        "m1",
+        "m2",
+        "m3",
+        "b1",
+        "b2",
+        "b3"
+    ],
+    "xyz_file": "./x_y_z.npz",
+    "n_sph": 400,
+    "n_car": 256,
+    "fields_save_path": "./yt_fields/",
+    "is_reload": false,
+    "reload_file": null,
+    "save_pkl": true,
+    "pkl_name": "spherical_data.pkl",
+    "fields_file_name": "fields",
+    "fields_auto_skip": true
+}

@@ -1,0 +1,25 @@
+from setuptools import setup, find_packages
+
+setup(
+    name='yt_tools',
+    version='0.1.2',
+    packages=find_packages(),
+    include_package_data=True,  # 这确保包数据被包括在安装中
+    package_data={
+        # 包含AIA_response目录下的所有.npz文件和根目录下的config.json文件
+        'yt_tools': ['AIA_response/*.npz', 'config.json'],
+    },
+    description='analysis the AMRVAC spherical data',
+    long_description='Analysis of mhd simulation data in three-dimensional spherical coordinates of amrvac',
+    author='Chen Guoyin',
+    author_email='gychen@smail.nju.edu.cn',
+    install_requires=[
+        # 依赖列表，格式为 '包名 >= 版本号'
+        # 例如: 'numpy >= 1.18.1'
+        'numpy>=1.18.5',  # 请根据需要调整版本号
+        'yt>=3.6.0',      # yt的版本号根据您使用的功能可能需要调整
+        'matplotlib>=3.2.2',  # matplotlib的版本号也是根据您的实际使用情况来
+        'scipy>=1.5.0',   # scipy的版本号根据您的需要进行调整
+	'aglio>=0.2.0',
+    ],
+)
