@@ -1,0 +1,8 @@
+Metadata-Version: 2.1
+Name: yt-tools
+Version: 1.1.1
+Summary: analysis the AMRVAC spherical data
+Author: Chen Guoyin, Fu Wentai, Ni Yiwei
+Author-email: gychen@smail.nju.edu.cn
+
+Analysis of mhd simulation data in three-dimensional spherical coordinates of amrvac

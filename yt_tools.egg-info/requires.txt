@@ -1,0 +1,7 @@
+numpy>=1.18.5
+yt>=3.6.0
+matplotlib>=3.2.2
+scipy>=1.5.0
+aglio>=0.2.0
+vtk>=9.3.0
+plotly>=5.20.0
