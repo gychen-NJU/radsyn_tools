@@ -11,7 +11,7 @@ setup(
     },
     description='analysis the AMRVAC spherical data',
     long_description='Analysis of mhd simulation data in three-dimensional spherical coordinates of amrvac',
-    author='Chen Guoyin, Fu Wentai, Ni Yiwei',
+    author='Fu Wentai, Chen Guoyin, Ni Yiwei',
     author_email='gychen@smail.nju.edu.cn',
     install_requires=[
         'numpy>=1.18.5', 
