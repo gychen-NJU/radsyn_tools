@@ -68,7 +68,7 @@ class aia_response():
 
 
 class spherical_data():
-    def __init__(self, folder='./data/', xyz_file='./x_y_z.npz', n_sph=400, n_car=256, fields_save_path='./yt_fields/'):
+    def __init__(self, folder='./data/', xyz_file='./x_y_z.npz', n_sph=400, n_car=400, fields_save_path='./yt_fields/'):
         start_time             = time.time()
         self.folder            = folder
         self.ts                = yt.load(os.path.join(folder,'*.dat'))
@@ -97,7 +97,7 @@ class spherical_data():
         self.output_name       = None
         self.fig               = None
         self.n_drop            = 0
-        self.rad_fig           = None
+        self.p                 = None
         self.bxyz_path         = None
         self.index             = None
         self.n_cut             = 0
@@ -110,7 +110,7 @@ class spherical_data():
         # 移除无法序列化的属性
         del state['ts']
         del state['fig']
-        del state['rad_fig']
+        del state['p']
         return state
 
     def __setstate__(self, state):
@@ -118,7 +118,7 @@ class spherical_data():
         # 重新加载或初始化 'ts' 属性
         self.ts      = yt.load(os.path.join(self.folder, '*.dat'))
         self.fig     = None
-        self.rad_fig = None
+        self.p       = None
     
     def get_test_array(self, r, lat, lon):
         r_g, lat_g, lon_g = np.meshgrid(r, lat , lon, indexing='ij')
@@ -218,6 +218,7 @@ class spherical_data():
         n_cut = self.n_sph/self.n_car*max(self.bbox_cart[:,1]-self.bbox_cart[:,0])/(self.bbox[0][1]-self.bbox[0][0])*np.sqrt(3) if n_cut=='auto' else n_cut
         n_cut = np.ceil(n_cut)
         self.n_cut = n_cut
+        first=True
         if not os.path.exists(self.fields_save_path):
             os.makedirs(self.fields_save_path)
         for idx, ds in enumerate(self.ts[begin:end]):
@@ -229,10 +230,12 @@ class spherical_data():
                     continue
             region = ds.r[::n*1j, ::n*1j, ::n*1j]
             save_dict = {}
-            time0 = time.time()
-            indexs, outside = self.get_index(x_sample, y_sample, z_sample, n_drop)
-            print('Get indexs time: %6.3f sec' % (time.time()-time0))
-            np.savez(os.path.join(self.folder,'indexs.npz'), **dict(indexs=indexs,outside=outside))
+            if first:
+                time0 = time.time()
+                indexs, outside = self.get_index(x_sample, y_sample, z_sample, n_drop)
+                print('Get indexs time: %6.3f sec' % (time.time()-time0))
+                np.savez(os.path.join(self.folder,'indexs.npz'), **dict(indexs=indexs,outside=outside))
+                first=False
             for field in fields_list:
                 time0 = time.time()
                 f = field
@@ -282,7 +285,7 @@ class spherical_data():
                      sampling_type='cell', force_override=True)
         return ds
 
-    def radiation_synthesis(self, norm=[1,0,0], iwave='171', fields_path='default', frame=0, zmin='auto', zmax='auto', save_path=None):
+    def radiation_synthesis(self, norm=[1,0,0], iwave='171', fields_path='default', frame=0, save_path=None, **kwargs):
         wavelength = int(iwave) * u.angstrom
         aia_cmap = ct.aia_color_table(wavelength)
         ds = self.add_radiation(iwave=iwave, fields_path=fields_path, frame=frame)
@@ -291,56 +294,74 @@ class spherical_data():
         norm = np.array(norm)
         norm = norm/np.linalg.norm(norm)
         field = ('gas', f'sdoaia{iwave}')
-        zmin = None if zmin=='auto' else zmin
-        zmax = None if zmax=='auto' else zmax
+        zmin   = kwargs.get('zmin', None)
+        zmax   = kwargs.get('zmax', None)
+        north  = kwargs.get('nort_vector', [0,0,1])
+        xlabel = kwargs.get('xlabel', '')
+        ylabel = kwargs.get('ylabel', '')
+        set_cb = kwargs.get('set_colorbar', True)
+        show   = kwargs.get('img_show', True)
+        clabel = kwargs.get('clabel', 'AIA SDO %s$\mathrm{\AA}$' % iwave)
         p = yt.OffAxisProjectionPlot(ds, norm, ('gas', 'sdoaia'+iwave), center=center, width=width)
         p.set_cmap(('gas','sdoaia'+iwave), aia_cmap)
-        p.set_xlabel('x')
-        p.set_ylabel('y')
-        p.set_colorbar_label(('gas', 'sdoaia'+iwave), 'AIA SDO %s$\mathrm{\AA}$' % iwave)
+        p.set_xlabel(xlabel)
+        p.set_ylabel(ylabel)
+        p.set_colorbar_label(('gas', 'sdoaia'+iwave), clabel)
         if zmin!=None and zmax!=None:
             p.set_zlim(field, zmin, zmax)
-
+        if not set_cb:
+            p.hide_colorbar()
         self.fig = p.plots[('gas', 'sdoaia'+iwave)].figure
         ax = self.fig.axes[0]
         ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
         ax.tick_params(axis='y', which='both', left=False, right=False, labelleft=False)
         plt.tight_layout()
-        self.rad_fig = p
+        self.p = p
         if save_path != None:
             if not os.path.exists(save_path):
                 os.makedirs(save_path, exist_ok=True)
             p.save(os.path.join(save_path, f'radiation_{iwave}_{frame:02}.png'))
-        if is_ipython_environment():
+        if is_ipython_environment() and show:
             p.show()
 
-    def projection(self, field='rho', norm=[1,0,0], fields_path='default', frame=0, zmin='auto', zmax='auto', save_path=None,ds=None):
+    def projection(self, field='rho', norm=[1,0,0], fields_path='default', frame=0, save_path=None,ds=None, **kwargs):
+        time0  = time.time()
         ds     = self.return_ds(frame=frame) if ds==None else ds
         center = 'c'
         width  = ds.quan(1, 'unitary')
         norm   = np.array(norm)
         norm   = norm/np.linalg.norm(norm)
-        zmin   = None if zmin=='auto' else zmin
-        zmax   = None if zmax=='auto' else zmax
-        p = yt.OffAxisProjectionPlot(ds, norm, field, center=center, width=width)
-        # p.set_cmap(('gas','sdoaia'+iwave), aia_cmap)
-        p.set_xlabel('x')
-        p.set_ylabel('y')
-        p.set_colorbar_label(field, f'{field}')
+        zmin   = kwargs.get('zmin', None)
+        zmax   = kwargs.get('zmax', None)
+        north  = kwargs.get('nort_vector', [0,0,1])
+        cmap   = kwargs.get('cmap', None)
+        xlabel = kwargs.get('xlabel', '')
+        ylabel = kwargs.get('ylabel', '')
+        clabel = kwargs.get('clabel', f'{field}')
+        set_cb = kwargs.get('set_colorbar', True)
+        show   = kwargs.get('img_show', True)
+        p = yt.OffAxisProjectionPlot(ds, norm, field, center=center, width=width, north_vector=north)
+        if cmap!=None:
+            p.set_cmap(field, cmap)
+        p.set_xlabel(xlabel)
+        p.set_ylabel(ylabel)
+        p.set_colorbar_label(field, clabel)
         if zmin!=None and zmax!=None:
             p.set_zlim(field, zmin, zmax)
-
+        if not set_cb:
+            p.hide_colorbar()
         self.fig = p.plots[field].figure
         ax = self.fig.axes[0]
         ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
         ax.tick_params(axis='y', which='both', left=False, right=False, labelleft=False)
         plt.tight_layout()
-        self.rad_fig = p
+        self.p = p
         if save_path != None:
             if not os.path.exists(save_path):
                 os.makedirs(save_path, exist_ok=True)
             p.save(os.path.join(save_path, f'projection_{field}_{frame:02}.png'))
-        if is_ipython_environment():
+            print('Time spent: %6.3f sec' % (time.time()-time0))
+        if is_ipython_environment() and show:
             p.show()
             
     def rad_review(self,iwave='171', frame=0, fields_path='default'):
@@ -416,41 +437,56 @@ class spherical_data():
             del rad, imageData, vtk_data
             gc.collect()  # 强制垃圾回收
 
-    def add_field(self, f_names,  frame='all', dr=0.0, n_cut=0):
-        print(f'frame: {frame}')
-        choice = self.ts if frame=='all' else self.ts[frame]
-        begin  = 0 if frame=='all' else frame
-        end    = len(self.ts) if frame=='all' else frame+1
-        x_sample, y_sample, z_sample, bbox_cart, bbox = self.load_xyz()
-        n = self.n_sph
-        for idx in range(begin,end):
-            ds = self.ts[idx]
-            field_file = os.path.join(self.fields_save_path,self.fields_file_name+str(idx).zfill(4)+'.npz')
-            dict = np.load(field_file)
-            check = set(f_names)-set(dict.files)
-            new_dict = {}
-            for f in dict.files:
-                new_dict[f]=dict[f]
-            if not check:
-                print(f'All {f_names} have been add in file: {field_file}')
-                continue
-            else:
-                region  = ds.r[::n*1j,::n*1j,::n*1j]
-                temp    = np.load(os.path.join(self.folder,'indexs.npz'))
-                indexs  = temp['indexs']
-                outside = temp['outside']
-                for field in check:
-                    time0 = time.time()
-                    f = field
-                    val_pre = np.array(region[('amrvac', f)])
-                    val_1d  = val_pre.ravel()
-                    new_dict[field], index = self.sample_field(val_1d, f, x_sample, y_sample, z_sample, 
-                                                               dr=dr, indexs=indexs, outside=outside)
-                    indices = np.where((index < (self.n_drop+self.n_cut+2)*n*n) & (index > (self.n_drop+1)*n*n))
-                    new_dict[field][indices] = 0
-                    print('process: %04d/%04d,  field: %5s, time: %6.3f sec' % (idx+1, len(self.ts), f, time.time()-time0))
+    def add_field(self, f_names,  frame='all', dr=0.0, n_cut=0, f_vals=None):
+        if not isinstance(f_vals, list):
+            choice = self.ts if frame=='all' else self.ts[frame]
+            begin  = 0 if frame=='all' else frame
+            end    = len(self.ts) if frame=='all' else frame+1
+            x_sample, y_sample, z_sample, bbox_cart, bbox = self.load_xyz()
+            n = self.n_sph
+            for idx in range(begin,end):
+                ds = self.ts[idx]
+                field_file = os.path.join(self.fields_save_path,self.fields_file_name+str(idx).zfill(4)+'.npz')
+                dict = np.load(field_file)
+                check = set(f_names)-set(dict.files)
+                new_dict = {}
+                for f in dict.files:
+                    new_dict[f]=dict[f]
+                if not check:
+                    print(f'All {f_names} have been add in file: {field_file}')
+                    continue
+                else:
+                    region  = ds.r[::n*1j,::n*1j,::n*1j]
+                    temp    = np.load(os.path.join(self.folder,'indexs.npz'))
+                    indexs  = temp['indexs']
+                    outside = temp['outside']
+                    for field in check:
+                        time0 = time.time()
+                        f = field
+                        val_pre = np.array(region[('amrvac', f)])
+                        val_1d  = val_pre.ravel()
+                        new_dict[field], index = self.sample_field(val_1d, f, x_sample, y_sample, z_sample, 
+                                                                   dr=dr, indexs=indexs, outside=outside)
+                        indices = np.where((index < (self.n_drop+self.n_cut+2)*n*n) & (index > (self.n_drop+1)*n*n))
+                        new_dict[field][indices] = 0
+                        print('process: %04d/%04d,  field: %5s, time: %6.3f sec' % (idx+1, len(self.ts), f, time.time()-time0))
+                    np.savez(field_file, **new_dict)
+                    print(f"!!!    File {field_file} is recreated     !!!")
+        elif len(f_names)==len(f_vals):
+            begin = 0            if frame=='all' else frame
+            end   = len(self.ts) if frame=='all' else frame+1
+            for idx in range(begin, end):
+                field_file = os.path.join(self.fields_save_path, self.fields_file_name+str(idx).zfill(4)+'.npz')
+                old_dict = np.load(field_file)
+                new_dict = {}
+                for f in old_dict.files:
+                    new_dict[f] = old_dict[f]
+                for f, v in zip(f_names, f_vals):
+                    new_dict[f] = v
                 np.savez(field_file, **new_dict)
-                print(f"!!!    File {field_file} is recreated     !!!")
+                print(f'### Frame: {idx},  Add {f_names} in fields. ###')
+        else:
+            raise SystemError(f"There is no fields: {f_names} in .dat files \nor \nthe numbers of the given f_vals not match that of the f_names")
 
     def brtp2bxyz(self, frame=0, save_path='default',**kwargs):
         save_path = os.path.join(self.folder,'bxyz') if save_path=='default' else save_path
