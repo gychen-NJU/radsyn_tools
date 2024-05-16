@@ -4,6 +4,9 @@ import numpy as np
 #               Integrate the field line                #
 # ===================================================== #
 def sphere_sample(point, r=1, nsample=10):
+    if nsample==1:
+        return point
+    nsample = nsample-1
     x0, y0, z0 = point
     rlist = np.random.uniform(0, r, nsample)
     theta = np.random.uniform(0,np.pi, nsample)
