@@ -68,7 +68,7 @@ class aia_response():
 
 
 class spherical_data():
-    def __init__(self, folder='./data/', xyz_file='./x_y_z.npz', n_sph=400, n_car=400, fields_save_path='./yt_fields/'):
+    def __init__(self, folder='./data/', xyz_file='./x_y_z.npz', n_sph=400, n_car=256, fields_save_path='./yt_fields/'):
         start_time             = time.time()
         self.folder            = folder
         self.ts                = yt.load(os.path.join(folder,'*.dat'))
@@ -97,10 +97,11 @@ class spherical_data():
         self.output_name       = None
         self.fig               = None
         self.n_drop            = 0
-        self.p                 = None
+        self.rad_fig           = None
         self.bxyz_path         = None
         self.index             = None
         self.n_cut             = 0
+        self.memory            = None
 
         end_time               = time.time()
         print(f"Initialization completed in {end_time - start_time} seconds")
@@ -110,7 +111,7 @@ class spherical_data():
         # 移除无法序列化的属性
         del state['ts']
         del state['fig']
-        del state['p']
+        del state['rad_fig']
         return state
 
     def __setstate__(self, state):
@@ -118,7 +119,7 @@ class spherical_data():
         # 重新加载或初始化 'ts' 属性
         self.ts      = yt.load(os.path.join(self.folder, '*.dat'))
         self.fig     = None
-        self.p       = None
+        self.rad_fig = None
     
     def get_test_array(self, r, lat, lon):
         r_g, lat_g, lon_g = np.meshgrid(r, lat , lon, indexing='ij')
@@ -201,7 +202,7 @@ class spherical_data():
         index = indexs
         return vals.reshape(orig_shape), index.reshape(orig_shape)
 
-    def save_fields(self, fields_list=['rho','e','m1','m2','m3','b1','b2','b3'], fields_file_name='fields', auto_skip=False, dr=0.0, n_cut='auto',begin=0, end=-1):
+    def save_fields(self, fields_list=['rho','e','m1','m2','m3','b1','b2','b3'], fields_file_name='fields', auto_skip=False, dr=0.0,begin=0, end=-1):
         '''
         dr            :   要切除掉的层的厚度，可缺省，默认为 0
         fields_list   :   需要提取的物理场，可以缺省（不推荐），默认为 ['rho','e','m1','m2','m3','b1','b2','b3']
@@ -215,10 +216,7 @@ class spherical_data():
         self.fields_file_name = fields_file_name
         n = self.n_sph
         x_sample, y_sample, z_sample, bbox_cart, bbox = self.load_xyz()
-        n_cut = self.n_sph/self.n_car*max(self.bbox_cart[:,1]-self.bbox_cart[:,0])/(self.bbox[0][1]-self.bbox[0][0])*np.sqrt(3) if n_cut=='auto' else n_cut
-        n_cut = np.ceil(n_cut)
-        self.n_cut = n_cut
-        first=True
+        first = True
         if not os.path.exists(self.fields_save_path):
             os.makedirs(self.fields_save_path)
         for idx, ds in enumerate(self.ts[begin:end]):
@@ -236,6 +234,8 @@ class spherical_data():
                 print('Get indexs time: %6.3f sec' % (time.time()-time0))
                 np.savez(os.path.join(self.folder,'indexs.npz'), **dict(indexs=indexs,outside=outside))
                 first=False
+            save_dict['indexs']  = indexs
+            save_dict['outside'] = outside
             for field in fields_list:
                 time0 = time.time()
                 f = field
@@ -243,7 +243,8 @@ class spherical_data():
                 val_1d  = val_pre.ravel()
                 save_dict[field], index = self.sample_field(val_1d, f, x_sample, y_sample, z_sample, 
                                                             dr=dr, indexs=indexs, outside=outside)
-                indices = np.where((index < (self.n_drop+n_cut+1)*n*n) & (index >= self.n_drop*n*n))
+                save_dict['index'] = index
+                indices = np.where((index < (self.n_drop+1)*n*n) & (index >= self.n_drop*n*n))
                 save_dict[field][indices] = 0
                 self.index = index
                 print('process: %04d/%04d,  field: %5s, time: %6.3f sec' % (idx+1, end-begin, f, time.time()-time0))
@@ -259,7 +260,8 @@ class spherical_data():
             pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
         print(f"Instance saved to {output_name}")
 
-    def return_ds(self, frame=0, fields_path='default'):
+    def return_ds(self, frame=0, fields_path='default',n_cut=0):
+        self.n_cut=n_cut
         if fields_path == 'default':
             fields_path = self.fields_save_path
         fields_file = glob.glob(os.path.join(fields_path, '*.npz'))
@@ -271,24 +273,31 @@ class spherical_data():
         # print(f'load the fields_file: {fields_file}')
         field = np.load(fields_file)
         new_dict = {}
-        keys = field.files
+        keys = list(set(field.files)-{'indexs','outside','index'})
         shp = field[keys[0]].shape
+        index = field['index']
+        n = self.n_sph
         for f in keys:
-            new_dict[f] = np.nan_to_num(field[f], nan=0)
+            fval          = field[f]
+            indices       = np.where((index<(n_cut+1+self.n_drop)*n*n))
+            fval[indices] = 0
+            new_dict[f]   = np.nan_to_num(fval, nan=0)
         ds = yt.load_uniform_grid(new_dict, shp, bbox=self.bbox_cart, length_unit = 'Mm')
         return ds
 
-    def add_radiation(self, iwave='171', fields_path='default', frame=0):
-        ds = self.return_ds(frame=frame, fields_path=fields_path)
+    def add_radiation(self, iwave='171', fields_path='default', frame=0, n_cut=0):
+        unit = (1.4e9)**2
+        ds = self.return_ds(frame=frame, fields_path=fields_path,n_cut=n_cut)
         ds.add_field(('gas', 'sdoaia'+iwave), 
-                     function=lambda field,data: aia_response().response(np.nan_to_num(np.log10(data['e']/data['rho']*0.66*1e6)), iwave)*data['rho']**2, 
+                     function=lambda field,data: aia_response().response(np.nan_to_num(np.log10(data['e']/data['rho']*0.66*1e6)), iwave)*data['rho']**2*unit, 
                      sampling_type='cell', force_override=True)
         return ds
 
     def radiation_synthesis(self, norm=[1,0,0], iwave='171', fields_path='default', frame=0, save_path=None, **kwargs):
         wavelength = int(iwave) * u.angstrom
         aia_cmap = ct.aia_color_table(wavelength)
-        ds = self.add_radiation(iwave=iwave, fields_path=fields_path, frame=frame)
+        n_cut    = kwargs.get('n_cut',0)
+        ds = self.add_radiation(iwave=iwave, fields_path=fields_path, frame=frame,n_cut=n_cut)
         center = 'c'
         width = ds.quan(1, 'unitary')
         norm = np.array(norm)
@@ -299,9 +308,7 @@ class spherical_data():
         north  = kwargs.get('nort_vector', [0,0,1])
         xlabel = kwargs.get('xlabel', '')
         ylabel = kwargs.get('ylabel', '')
-        set_cb = kwargs.get('set_colorbar', True)
-        show   = kwargs.get('img_show', True)
-        clabel = kwargs.get('clabel', 'AIA SDO %s$\mathrm{\AA}$' % iwave)
+        clabel = kwargs.get('clabel', 'AIA SDO %s$\mathrm{\AA}~[\mathrm{DN/s}]$' % iwave)
         p = yt.OffAxisProjectionPlot(ds, norm, ('gas', 'sdoaia'+iwave), center=center, width=width)
         p.set_cmap(('gas','sdoaia'+iwave), aia_cmap)
         p.set_xlabel(xlabel)
@@ -309,59 +316,47 @@ class spherical_data():
         p.set_colorbar_label(('gas', 'sdoaia'+iwave), clabel)
         if zmin!=None and zmax!=None:
             p.set_zlim(field, zmin, zmax)
-        if not set_cb:
-            p.hide_colorbar()
+
         self.fig = p.plots[('gas', 'sdoaia'+iwave)].figure
         ax = self.fig.axes[0]
         ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
         ax.tick_params(axis='y', which='both', left=False, right=False, labelleft=False)
         plt.tight_layout()
-        self.p = p
+        self.rad_fig = p
         if save_path != None:
             if not os.path.exists(save_path):
                 os.makedirs(save_path, exist_ok=True)
             p.save(os.path.join(save_path, f'radiation_{iwave}_{frame:02}.png'))
-        if is_ipython_environment() and show:
+        if is_ipython_environment():
             p.show()
 
-    def projection(self, field='rho', norm=[1,0,0], fields_path='default', frame=0, save_path=None,ds=None, **kwargs):
-        time0  = time.time()
+    def projection(self, field='rho', norm=[1,0,0], fields_path='default', frame=0, zmin='auto', zmax='auto', save_path=None,ds=None):
         ds     = self.return_ds(frame=frame) if ds==None else ds
         center = 'c'
         width  = ds.quan(1, 'unitary')
         norm   = np.array(norm)
         norm   = norm/np.linalg.norm(norm)
-        zmin   = kwargs.get('zmin', None)
-        zmax   = kwargs.get('zmax', None)
-        north  = kwargs.get('nort_vector', [0,0,1])
-        cmap   = kwargs.get('cmap', None)
-        xlabel = kwargs.get('xlabel', '')
-        ylabel = kwargs.get('ylabel', '')
-        clabel = kwargs.get('clabel', f'{field}')
-        set_cb = kwargs.get('set_colorbar', True)
-        show   = kwargs.get('img_show', True)
-        p = yt.OffAxisProjectionPlot(ds, norm, field, center=center, width=width, north_vector=north)
-        if cmap!=None:
-            p.set_cmap(field, cmap)
-        p.set_xlabel(xlabel)
-        p.set_ylabel(ylabel)
-        p.set_colorbar_label(field, clabel)
+        zmin   = None if zmin=='auto' else zmin
+        zmax   = None if zmax=='auto' else zmax
+        p = yt.OffAxisProjectionPlot(ds, norm, field, center=center, width=width)
+        # p.set_cmap(('gas','sdoaia'+iwave), aia_cmap)
+        p.set_xlabel('x')
+        p.set_ylabel('y')
+        p.set_colorbar_label(field, f'{field}')
         if zmin!=None and zmax!=None:
             p.set_zlim(field, zmin, zmax)
-        if not set_cb:
-            p.hide_colorbar()
+
         self.fig = p.plots[field].figure
         ax = self.fig.axes[0]
         ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
         ax.tick_params(axis='y', which='both', left=False, right=False, labelleft=False)
         plt.tight_layout()
-        self.p = p
+        self.rad_fig = p
         if save_path != None:
             if not os.path.exists(save_path):
                 os.makedirs(save_path, exist_ok=True)
             p.save(os.path.join(save_path, f'projection_{field}_{frame:02}.png'))
-            print('Time spent: %6.3f sec' % (time.time()-time0))
-        if is_ipython_environment() and show:
+        if is_ipython_environment():
             p.show()
             
     def rad_review(self,iwave='171', frame=0, fields_path='default'):
@@ -373,7 +368,7 @@ class spherical_data():
         print("Camera's Focus   : ", sc.camera.focus)
         print("Normal verctor   : ", sc.camera.position-sc.camera.focus)
 
-    def rad_vtk(self, iwave='171', start_frame=0, end_frame='auto', fields_path='default' ,sight='top', save_path='vtk', auto_skip=True):
+    def rad_vtk(self, iwave='171', start_frame=0, end_frame='auto', fields_path='default' ,sight='top', save_path='vtk', auto_skip=True, **kwargs):
         end_frame   = min(end_frame, len(self.ts)) if end_frame!='auto' else len(self.ts)
         n           = self.n_car
         field       = ('gas', 'sdoaia'+iwave)
@@ -382,42 +377,44 @@ class spherical_data():
         dx          = (self.bbox_cart[0][1]-self.bbox_cart[0][0])/n
         dy          = (self.bbox_cart[1][1]-self.bbox_cart[1][0])/n
         dz          = (self.bbox_cart[2][1]-self.bbox_cart[2][0])/n
+        n_cut       = kwargs.get('n_cut', self.n_cut)
         if not os.path.exists(save_path):
             os.makedirs(save_path, exist_ok=True)
             print(f'create folder: {save_path}')
         for iframe in range(start_frame, end_frame):
             t_start   = time.time()
             vtk_name  = os.path.join(save_path,f'sdoaia{iwave}_{sight}_{iframe:02}.vtk')
-            ds        = self.add_radiation(iwave=iwave, fields_path=fields_path, frame=iframe)
+            if os.path.exists(vtk_name):
+                print(f'File {vtk_name} already exists. Skipping...')
+                continue
+            ds        = self.add_radiation(iwave=iwave, fields_path=fields_path, frame=iframe, n_cut=n_cut)
             region    = ds.r[::n*1j,::n*1j,::n*1j]
             rad       = np.nan_to_num(np.array(region[field]))
             imageData = vtk.vtkImageData()
             nx,nz,ny  = rad.shape
-            if os.path.exists(vtk_name):
-                print(f'File {vtk_name} already exists. Skipping...')
-                continue
+            L0        = 6.95e10
             if sight=='top':
-                emission = rad.sum(axis=0).transpose()
+                emission = rad.sum(axis=0).transpose()*dx*L0
                 imageData.SetDimensions(1,ny,nz)
                 imageData.SetSpacing(dx,dy,dz)
                 imageData.SetOrigin(xlb-1e-3,ylb,zlb)
             elif sight=='right':
-                emission = rad.sum(axis=1)
+                emission = rad.sum(axis=1)*dy*L0
                 imageData.SetDimensions(nx,1,nz)
                 imageData.SetSpacing(dx,dy,dz)
                 imageData.SetOrigin(xlb,ylb-1.e-3,zlb)
             elif sight=='left':
-                emission = rad.sum(axis=1)
+                emission = rad.sum(axis=1)*dy*L0
                 imageData.SetDimensions(nx,1,nz)
                 imageData.SetSpacing(dx,dy,dz)
                 imageData.SetOrigin(xlb,yub+1.e-3,zlb)
             elif sight=='up':
-                emission = rad.sum(axis=2).transpose()
+                emission = rad.sum(axis=2).transpose()*dz*L0
                 imageData.SetDimensions(nx,ny,1)
                 imageData.SetSpacing(dx,dy,dz)
                 imageData.SetOrigin(xlb,ylb,zlb-1.e-3)
             elif sight=='down':
-                emission = rad.sum(axis=2).transpose()
+                emission = rad.sum(axis=2).transpose()*dz*L0
                 imageData.SetDimensions(nx,ny,1)
                 imageData.SetSpacing(dx,dy,dz)
                 imageData.SetOrigin(xlb,ylb,zub+1.e-3)
@@ -457,9 +454,11 @@ class spherical_data():
                     continue
                 else:
                     region  = ds.r[::n*1j,::n*1j,::n*1j]
-                    temp    = np.load(os.path.join(self.folder,'indexs.npz'))
-                    indexs  = temp['indexs']
-                    outside = temp['outside']
+                    # temp    = np.load(os.path.join(self.folder,'indexs.npz'))
+                    # indexs  = temp['indexs']
+                    # outside = temp['outside']
+                    indexs  = new_dict['indexs']
+                    outside = new_dict['outside']
                     for field in check:
                         time0 = time.time()
                         f = field
@@ -467,7 +466,7 @@ class spherical_data():
                         val_1d  = val_pre.ravel()
                         new_dict[field], index = self.sample_field(val_1d, f, x_sample, y_sample, z_sample, 
                                                                    dr=dr, indexs=indexs, outside=outside)
-                        indices = np.where((index < (self.n_drop+self.n_cut+2)*n*n) & (index > (self.n_drop+1)*n*n))
+                        indices = np.where((index < (self.n_drop+1)*n*n) & (index > (self.n_drop)*n*n))
                         new_dict[field][indices] = 0
                         print('process: %04d/%04d,  field: %5s, time: %6.3f sec' % (idx+1, len(self.ts), f, time.time()-time0))
                     np.savez(field_file, **new_dict)
@@ -507,6 +506,34 @@ class spherical_data():
         bxyz_file_name = os.path.join(save_path, 'bxyz_'+str(frame).zfill(4)+'.npy')
         np.save(bxyz_file_name,b_vec)
         print(f'Create file: {bxyz_file_name}')
+        
+    def xyz2idx(self, p):
+        x0,y0,z0     = p
+        bbox_cart    = self.bbox_cart
+        dxyz         = bbox_cart[:,1]-bbox_cart[:,0]
+        n            = self.n_car
+        x0_idx       = (x0-bbox_cart[0][0])/(bbox_cart[0][1]-bbox_cart[0][0])*n
+        y0_idx       = (y0-bbox_cart[1][0])/(bbox_cart[1][1]-bbox_cart[1][0])*n
+        z0_idx       = (z0-bbox_cart[2][0])/(bbox_cart[2][1]-bbox_cart[2][0])*n
+        return np.array([x0_idx,y0_idx,z0_idx])
+    
+    def idx2xyz(self, xyz_idx):
+        bbox_cart = self.bbox_cart
+        dxyz      = bbox_cart[:,1]-bbox_cart[:,0]
+        n         = self.n_car
+        xyz       = xyz_idx/n*dxyz+bbox_cart[:,0]
+        return xyz
+    
+    def sample_with_idx(self, idx, field, frame=0):
+        xi,yi,zi    = np.floor(idx).astype(int).T
+        xd,yd,zd    = (idx-np.floor(idx)).T
+        fields_file = os.path.join(self.fields_save_path,self.fields_file_name+str(frame).zfill(4)+'.npz')
+        fields      = np.load(fields_file)
+        f           = fields[field]
+        ret         = f[xi,yi,zi]*(1-xd)*(1-yd)*(1-zd)+f[xi+1,yi,zi]*xd*(1-yd)*(1-zd)+f[xi,yi+1,zi]*(1-xd)*yd*(1-zd)+\
+                      f[xi,yi,zi+1]*(1-xd)*(1-yd)*zd+f[xi+1,yi+1,zi]*xd*yd*(1-zd)+f[xi+1,yi,zi+1]*xd*(1-yd)*zd+\
+                      f[xi,yi+1,zi+1]*(1-xd)*yd*zd+f[xi+1,yi+1,zi+1]*xd*yd*zd
+        return ret
 
     def magline(self, p, n_lines=10, radius=0.005, frame=0):
         if self.bxyz_path==None:
@@ -518,17 +545,16 @@ class spherical_data():
             if not os.path.exists(bxyz_file):
                 print('Start to save bxyz_file')
                 self.brtp2bxyz(frame=frame)
-        x0,y0,z0     = p
         bbox_cart    = self.bbox_cart
         bbox         = np.array(self.bbox)
         dxyz         = bbox_cart[:,1]-bbox_cart[:,0]
         n            = self.n_car
         s_unit       = dxyz.min()/n
         n_dr         = np.ceil(radius/s_unit)
-        x0_idx       = round((x0-bbox_cart[0][0])/(bbox_cart[0][1]-bbox_cart[0][0])*n)
-        y0_idx       = round((y0-bbox_cart[1][0])/(bbox_cart[1][1]-bbox_cart[1][0])*n)
-        z0_idx       = round((z0-bbox_cart[2][0])/(bbox_cart[2][1]-bbox_cart[2][0])*n)
+        x0_idx,y0_idx,z0_idx=self.xyz2idx(p)
         start_points = sphere_sample([x0_idx, y0_idx, z0_idx], r=n_dr, nsample=n_lines)
+        if n_lines==1:
+            start_points = [start_points]
         b_vec        = np.load(bxyz_file)
         field_lines = []
         for p in start_points:
@@ -546,50 +572,83 @@ class spherical_data():
         r_slice           :  显示一个底边界的切片，默认为数据的下界
         补充：一般第一次可视化会涉及到分量转化和坐标存取，因此稍微慢一些，后续重复会比较快
         '''
+        slice_cmap      = kwargs.get('slice_cmap', 'Viridis')
+        point_size      = kwargs.get('point_size', 10)
+        magline_width   = kwargs.get('magline_width', 2)
+        magline_color   = kwargs.get('magline_color', 'white')
+        camera          = kwargs.get('camera', None)
+        save_path       = kwargs.get('save_path', None)
+        is_show         = kwargs.get('is_show', True)
+        remember        = kwargs.get('remember', True)
+        is_multi_points = (len(np.shape(p))>1)
+        ps = p if is_multi_points else [p]
+        self.add_field(f_names=['b1','b2','b3'],frame=frame,n_cut=self.n_cut)
         bbox         = np.array(self.bbox)
-        fields_file  = os.path.join(self.fields_save_path,self.fields_file_name+str(frame).zfill(4)+'.npz')
-        data         = np.load(fields_file)
-        br           = data['b1']
+        # fields_file  = os.path.join(self.fields_save_path,self.fields_file_name+str(frame).zfill(4)+'.npz')
+        # data         = np.load(fields_file)
+        # br           = data['b1']
         r_slice      = kwargs.get('r_slice',bbox[0][0])
-        n_slice      = np.ceil((r_slice-bbox[0][0])/(bbox[0][1]-bbox[0][0])*self.n_sph)
+        n_slice      = np.ceil((r_slice-bbox[0][0])/(bbox[0][1]-bbox[0][0])*self.n_sph).astype(int)
         n            = self.n_sph
+        deg = np.pi/180
+        r = np.array([r_slice])
+        t = np.linspace(bbox[1][0],bbox[1][1], n)*deg
+        p = np.linspace(bbox[2][0],bbox[2][1], n)*deg
+        R,T,P = np.meshgrid(r,t,p, indexing='ij')
+        Z = R*np.sin(T)
+        X = R*np.cos(T)*np.cos(P)
+        Y = R*np.cos(T)*np.sin(P)
+        if self.memory is not None:
+            if remember and (self.memory['n_slice']==n_slice):
+                br = self.memory['br']
+        if (not remember) or (self.memory is None):
+            ds = self.ts[frame]
+            region = ds.r[::n*1j,::n*1j,::n*1j]
+            br = np.array(region[('amrvac','b1')])[n_slice,:,:]
+            if remember:
+                self.memory = {}
+                self.memory['n_slice'] = n_slice
+                self.memory['br']      = br
+        fig = go.Figure(data=[go.Scatter3d(
+            x=X.flatten(),
+            y=Y.flatten(),
+            z=Z.flatten(),
+            mode='markers',
+            marker=dict(
+                size=point_size,  # Adjust size to your liking
+                color=br[::-1].flatten(),  # Color of markers
+                colorscale=slice_cmap,  # This is a visual preference
+                colorbar=dict(title='Br'),
+                opacity=0.8
+            ),
+            showlegend=False
+        )])
+        dx,dy,dz = (self.bbox_cart[:,1]-self.bbox_cart[:,0])/self.n_car
         x_sample, y_sample, z_sample, bbox_cart, bbox = self.load_xyz()
-        if isinstance(self.index, np.ndarray):
-            index = self.index
-            indices = np.where((index < (n_slice+2)*n*n) & (index > (n_slice+1)*n*n))
-        else:
-            val_pre = br
-            val_1d  = val_pre.ravel()
-            if os.path.exists(os.path.join(self.folder,'indexs.npz')):
-                temp = np.load(os.path.join(self.folder,'indexs.npz'))
-                indexs = temp['indexs']
-                outside = temp['outside']
-            else:
-                indexs = None
-                outside = None
-            Br, index = self.sample_field(val_1d, 'b1', x_sample, y_sample, z_sample, 
-                                          dr=0.0, indexs=indexs, outside=outside)
-            indices = np.where((index < (n_slice+2)*n*n) & (index > (n_slice+1)*n*n))
-            self.index = index
-        field_lines = self.magline(p,n_lines=n_lines,radius=radius,frame=frame)
-        fig = go.Figure(data=[go.Mesh3d(x=x_sample[indices], 
-                                        y=y_sample[indices], 
-                                        z=z_sample[indices],
-                                        intensity=br[indices],
-                                        colorscale='gray',
-                                        colorbar=dict(title='Br'),
-                                        opacity=0.8)])
-        # fig.data=[]
-        for fieldline in field_lines:
-            flx_idx,fly_idx, flz_idx = np.floor(fieldline).astype(int).transpose()
-            fig.add_trace(go.Scatter3d(x=x_sample[flx_idx,fly_idx,flz_idx],
-                                       y=y_sample[flx_idx,fly_idx,flz_idx],
-                                       z=z_sample[flx_idx,fly_idx,flz_idx],
-                                       mode='lines',
-                                       showlegend=False,
-                                       line=dict(color='white',width=2)))
+        for p in ps:
+            field_lines = self.magline(p,n_lines=n_lines,radius=radius,frame=frame)
+            for fieldline in field_lines:
+                flx_idx,fly_idx, flz_idx = np.floor(fieldline).astype(int).transpose()
+                dxx,dyy,dzz = ((fieldline-np.stack([flx_idx,fly_idx,flz_idx], axis=1))*np.array([dx,dy,dz])).T
+                xx = x_sample[flx_idx,fly_idx,flz_idx]+dxx
+                yy = y_sample[flx_idx,fly_idx,flz_idx]+dyy
+                zz = z_sample[flx_idx,fly_idx,flz_idx]+dzz
+                fig.add_trace(go.Scatter3d(x=xx,
+                                           y=yy,
+                                           z=zz,
+                                           mode='lines',
+                                           showlegend=False,
+                                           line=dict(color=magline_color,width=magline_width)))
         fig.update_layout(width=800,height=800)
-        fig.show()
+        if camera is not None:
+            fig.update_layout(
+                scene=dict(camera=camera)
+            )
+        if save_path is not None:
+            fig.write_image(save_path)
+        self.fig = fig
+        if is_show:
+            fig.show()
               
     @classmethod
     def load(cls, load_name='spherical_data.pkl'):
