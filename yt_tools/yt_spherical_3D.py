@@ -330,19 +330,33 @@ class spherical_data():
         if is_ipython_environment():
             p.show()
 
-    def projection(self, field='rho', norm=[1,0,0], fields_path='default', frame=0, zmin='auto', zmax='auto', save_path=None,ds=None):
-        ds     = self.return_ds(frame=frame) if ds==None else ds
-        center = 'c'
-        width  = ds.quan(1, 'unitary')
-        norm   = np.array(norm)
-        norm   = norm/np.linalg.norm(norm)
-        zmin   = None if zmin=='auto' else zmin
-        zmax   = None if zmax=='auto' else zmax
-        p = yt.OffAxisProjectionPlot(ds, norm, field, center=center, width=width)
-        # p.set_cmap(('gas','sdoaia'+iwave), aia_cmap)
-        p.set_xlabel('x')
-        p.set_ylabel('y')
-        p.set_colorbar_label(field, f'{field}')
+    def projection(self, field='rho', norm=[1,0,0], fields_path='default', frame=0, save_path=None,ds=None, **kwargs):
+        time0     = time.time()
+        ds        = self.return_ds(frame=frame) if ds==None else ds
+        center    = 'c'
+        width     = ds.quan(1, 'unitary')
+        norm      = np.array(norm)
+        norm      = norm/np.linalg.norm(norm)
+        zmin      = kwargs.get('zmin', None)
+        zmax      = kwargs.get('zmax', None)
+        north     = kwargs.get('nort_vector', [0,0,1])
+        cmap      = kwargs.get('cmap', None)
+        xlabel    = kwargs.get('xlabel', '')
+        ylabel    = kwargs.get('ylabel', '')
+        clabel    = kwargs.get('clabel', f'{field}')
+        set_cb    = kwargs.get('set_colorbar', True)
+        show      = kwargs.get('img_show', True)
+        plot_norm = kwargs.get('plot_norm', None)
+        p = yt.OffAxisProjectionPlot(ds, norm, field, center=center, width=width, north_vector=north)
+        if cmap!=None:
+            p.set_cmap(field, cmap)
+        p.set_xlabel(xlabel)
+        p.set_ylabel(ylabel)
+        p.set_colorbar_label(field, clabel)
+        if not set_cb:
+            p.hide_colorbar()
+        if plot_norm is not None:
+            p.set_norm(field, plot_norm)
         if zmin!=None and zmax!=None:
             p.set_zlim(field, zmin, zmax)
 
@@ -351,12 +365,13 @@ class spherical_data():
         ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
         ax.tick_params(axis='y', which='both', left=False, right=False, labelleft=False)
         plt.tight_layout()
-        self.rad_fig = p
+        self.p = p
         if save_path != None:
             if not os.path.exists(save_path):
                 os.makedirs(save_path, exist_ok=True)
             p.save(os.path.join(save_path, f'projection_{field}_{frame:02}.png'))
-        if is_ipython_environment():
+            print('Time spent: %6.3f sec' % (time.time()-time0))
+        if is_ipython_environment() and show:
             p.show()
             
     def rad_review(self,iwave='171', frame=0, fields_path='default'):
