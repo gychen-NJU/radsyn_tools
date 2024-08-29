@@ -23,6 +23,10 @@ from sunpy.visualization.colormaps import color_tables as ct
 from vtk.util.numpy_support import numpy_to_vtk
 
 from .stream_line import *
+from . import geometry
+from .need import *
+from .QSL import tangent, rfunction, rk4_stepping, LineIntegrate, _SquanshingQ
+from .twist import twist_number, parallel_twist, calculate_twist_range
 
 def is_ipython_environment():
     try:
@@ -353,12 +357,12 @@ class spherical_data():
         p.set_xlabel(xlabel)
         p.set_ylabel(ylabel)
         p.set_colorbar_label(field, clabel)
+        if zmin!=None and zmax!=None:
+            p.set_zlim(field, zmin, zmax)
         if not set_cb:
             p.hide_colorbar()
         if plot_norm is not None:
             p.set_norm(field, plot_norm)
-        if zmin!=None and zmax!=None:
-            p.set_zlim(field, zmin, zmax)
 
         self.fig = p.plots[field].figure
         ax = self.fig.axes[0]
@@ -521,6 +525,12 @@ class spherical_data():
         bxyz_file_name = os.path.join(save_path, 'bxyz_'+str(frame).zfill(4)+'.npy')
         np.save(bxyz_file_name,b_vec)
         print(f'Create file: {bxyz_file_name}')
+
+    def load_bxyz(self, frame=0, **kwargs):
+        save_path = self.bxyz_path
+        bxyz_file_name = os.path.join(save_path, 'bxyz_'+str(frame).zfill(4)+'.npy')
+        bxyz = np.load(bxyz_file_name)
+        return bxyz
         
     def xyz2idx(self, p):
         x0,y0,z0     = p
@@ -539,15 +549,27 @@ class spherical_data():
         xyz       = xyz_idx/n*dxyz+bbox_cart[:,0]
         return xyz
     
-    def sample_with_idx(self, idx, field, frame=0):
-        xi,yi,zi    = np.floor(idx).astype(int).T
-        xd,yd,zd    = (idx-np.floor(idx)).T
-        fields_file = os.path.join(self.fields_save_path,self.fields_file_name+str(frame).zfill(4)+'.npz')
-        fields      = np.load(fields_file)
-        f           = fields[field]
-        ret         = f[xi,yi,zi]*(1-xd)*(1-yd)*(1-zd)+f[xi+1,yi,zi]*xd*(1-yd)*(1-zd)+f[xi,yi+1,zi]*(1-xd)*yd*(1-zd)+\
-                      f[xi,yi,zi+1]*(1-xd)*(1-yd)*zd+f[xi+1,yi+1,zi]*xd*yd*(1-zd)+f[xi+1,yi,zi+1]*xd*(1-yd)*zd+\
-                      f[xi,yi+1,zi+1]*(1-xd)*yd*zd+f[xi+1,yi+1,zi+1]*xd*yd*zd
+    def sample_with_idx(self, idx=None, field=None, frame=0, **kwargs):
+        n               = self.n_car
+        give_field      = kwargs.get('give_field', None)
+        xi,yi,zi        = np.floor(idx).astype(int).T
+        if len(np.shape(idx))<2:
+            xf,yf,zf    = np.min([xi+1,n-1]), np.min([yi+1,n-1]), np.min([zi+1,n-1])
+        else:
+            xf,yf,zf    = np.where(xi+1<n-1,xi+1,n-1), np.where(yi+1<n-1,yi+1,n-1), np.where(zi+1<n-1,zi+1,n-1)
+        xd,yd,zd        = (idx-np.floor(idx)).T
+        if give_field is None:
+            fields_file = os.path.join(self.fields_save_path,self.fields_file_name+str(frame).zfill(4)+'.npz')
+            fields      = np.load(fields_file)
+            f           = fields[field]
+        else:
+            f           = give_field
+        xd              = xd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+        yd              = yd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+        zd              = zd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+        ret             = f[xi,yi,zi]*(1-xd)*(1-yd)*(1-zd)+f[xf,yi,zi]*xd*(1-yd)*(1-zd)+f[xi,yf,zi]*(1-xd)*yd*(1-zd)+\
+                          f[xi,yi,zf]*(1-xd)*(1-yd)*zd+f[xf,yf,zi]*xd*yd*(1-zd)+f[xf,yi,zf]*xd*(1-yd)*zd+\
+                          f[xi,yf,zf]*(1-xd)*yd*zd+f[xf,yf,zf]*xd*yd*zd
         return ret
 
     def magline(self, p, n_lines=10, radius=0.005, frame=0):
@@ -573,6 +595,7 @@ class spherical_data():
         b_vec        = np.load(bxyz_file)
         field_lines = []
         for p in start_points:
+            # print('p= ', p)
             fieldline = field_line(b_vec, p, dxyz=dxyz)
             field_lines.append(fieldline)
         return field_lines
@@ -664,6 +687,35 @@ class spherical_data():
         self.fig = fig
         if is_show:
             fig.show()
+
+    # from .QSL import tangent, rfunction, rk4_stepping, LineIntegrate, _SquanshingQ
+    def tangent(self, lineP, bxyz):
+        return tangent(self, lineP, bxyz)
+
+    def rfunction(self, ipt, bxyz, Jacobi, dxyz=[1.,1.,1.], **kwargs):
+        return rfunction(self, ipt, bxyz, Jacobi, dxyz=dxyz, **kwargs)
+
+    def rk4_stepping(self, init, bxyz, Jacobi, dxyz=[1.,1.,1.], sig=1., ds=0.001):
+        return rk4_stepping(self, init, bxyz, Jacobi, dxyz=dxyz, sig=sig, ds=ds)
+
+    def LineIntegrate(self, lineP, bxyz, Jacobi, dxyz, **kwargs):
+        return LineIntegrate(self, lineP, bxyz, Jacobi, dxyz, **kwargs)
+
+    def _SquanshingQ(self, xyz, frame=0, **kwargs):
+        return _SquanshingQ(self, xyz, frame=frame, **kwargs)
+
+    def _twist(self, point, frame=0, **kwargs):
+        return twist_number(self, point, frame, **kwargs)
+
+    def calculate_twist_range(self, 
+                              start_idx, end_idx, boundary_points, progress_list, total_tasks, lock, 
+                              print_interval=100, t0=0, frame=0,dxyz=[1.,1.,1.], bxyz_file=None, bxyz=None, err=1.e-10, current=None):
+        return calculate_twist_range(self, 
+                                     start_idx, end_idx, boundary_points, progress_list, total_tasks, lock, 
+                                     print_interval, t0, frame, dxyz, bxyz_file, bxyz, err, current)
+
+    def _parallel_twist(self, boundary_points, n_cores=10, print_interval=100, **kwargs):
+        return parallel_twist(self, boundary_points, n_cores, print_interval, **kwargs)
               
     @classmethod
     def load(cls, load_name='spherical_data.pkl'):
