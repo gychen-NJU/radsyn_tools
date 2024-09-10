@@ -25,7 +25,7 @@ from vtk.util.numpy_support import numpy_to_vtk
 from .stream_line import *
 from . import geometry
 from .need import *
-from .QSL import tangent, rfunction, rk4_stepping, LineIntegrate, _SquanshingQ
+from .QSL import tangent, rfunction, rk4_stepping, LineIntegrate, _SquanshingQ, parallel_QSL
 from .twist import twist_number, parallel_twist, calculate_twist_range
 
 def is_ipython_environment():
@@ -106,6 +106,9 @@ class spherical_data():
         self.index             = None
         self.n_cut             = 0
         self.memory            = None
+        self.dxyz              = None
+        self.bxyz              = None
+        self.Jacobi            = None
 
         end_time               = time.time()
         print(f"Initialization completed in {end_time - start_time} seconds")
@@ -286,7 +289,7 @@ class spherical_data():
             indices       = np.where((index<(n_cut+1+self.n_drop)*n*n))
             fval[indices] = 0
             new_dict[f]   = np.nan_to_num(fval, nan=0)
-        ds = yt.load_uniform_grid(new_dict, shp, bbox=self.bbox_cart, length_unit = 'Mm')
+        ds = yt.load_uniform_grid(new_dict, shp, bbox=self.bbox_cart, length_unit = 'code_length')
         return ds
 
     def add_radiation(self, iwave='171', fields_path='default', frame=0, n_cut=0):
@@ -564,9 +567,10 @@ class spherical_data():
             f           = fields[field]
         else:
             f           = give_field
-        xd              = xd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
-        yd              = yd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
-        zd              = zd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+        if idx.ndim>1:
+            xd              = xd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+            yd              = yd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+            zd              = zd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
         ret             = f[xi,yi,zi]*(1-xd)*(1-yd)*(1-zd)+f[xf,yi,zi]*xd*(1-yd)*(1-zd)+f[xi,yf,zi]*(1-xd)*yd*(1-zd)+\
                           f[xi,yi,zf]*(1-xd)*(1-yd)*zd+f[xf,yf,zi]*xd*yd*(1-zd)+f[xf,yi,zf]*xd*(1-yd)*zd+\
                           f[xi,yf,zf]*(1-xd)*yd*zd+f[xf,yf,zf]*xd*yd*zd
@@ -716,6 +720,15 @@ class spherical_data():
 
     def _parallel_twist(self, boundary_points, n_cores=10, print_interval=100, **kwargs):
         return parallel_twist(self, boundary_points, n_cores, print_interval, **kwargs)
+
+    def _parallel_qsl(self, points, n_cores=10, print_interval=100, **kwargs):
+        return parallel_QSL(self, points, n_cores=n_cores, print_interval=print_interval, **kwargs)
+
+    # def calculate_qsl_range(self, start_idx, end_idx, boundary_points, progress_list, total_tasks, lock, print_interval=100, t0=0, r_min=1.01):
+    #     return calculate_qsl_range(self, start_idx, end_idx, boundary_points, progress_list, total_tasks, lock, print_interval=print_interval, t0=t0, r_min=r_min)
+
+    # def parallel_qsl(self, boundary_points, n_cores=10, print_interval=100, **kwargs):
+    #     return parallel_qsl(self, boundary_points, n_cores=n_cores, print_interval=print_interval, **kwargs)
               
     @classmethod
     def load(cls, load_name='spherical_data.pkl'):
