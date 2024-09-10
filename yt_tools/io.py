@@ -46,3 +46,13 @@ def save_to_vtp_surface(coords, values, output_filename):
     writer.SetInputData(poly_data)
     writer.Write()
     print(f"Data successfully saved to {output_filename}")
+
+
+def matplotlib_to_plotly(cmap_name, pl_entries=255):
+    cmap = plt.get_cmap(cmap_name)
+    h = 1.0/(pl_entries-1)
+    pl_colorscale = []
+    for k in range(pl_entries):
+        C = list(map(np.uint8, np.array(cmap(k*h)[:3])*255))
+        pl_colorscale.append([k*h, 'rgb'+str((C[0], C[1], C[2]))])
+    return pl_colorscale
