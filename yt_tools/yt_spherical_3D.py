@@ -267,6 +267,24 @@ class spherical_data():
             pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
         print(f"Instance saved to {output_name}")
 
+    def get_field(self, frame=0, **kwargs):
+        fnames = kwargs.get('fnames', None)
+        fields_file = sorted(glob.glob(os.path.join(self.fields_save_path, '*.npz')))
+        field_file = fields_file[frame]
+        field = np.load(field_file)
+        ret   = []
+        if fnames is None:
+            fnames = field.files
+        if not isinstance(fnames, list):
+            fnames = [fnames]
+        for f in fnames:
+            ret.append(field[f])
+        return np.array(ret)
+
+    def get_outside(self):
+        x, y, z, bbox_cart, bbox = self.load_xyz()
+        
+
     def return_ds(self, frame=0, fields_path='default',n_cut=0):
         self.n_cut=n_cut
         if fields_path == 'default':
@@ -340,8 +358,8 @@ class spherical_data():
     def projection(self, field='rho', norm=[1,0,0], fields_path='default', frame=0, save_path=None,ds=None, **kwargs):
         time0     = time.time()
         ds        = self.return_ds(frame=frame) if ds==None else ds
-        center    = 'c'
-        width     = ds.quan(1, 'unitary')
+        center    = kwargs.get('center','c')
+        width     = kwargs.get('width', ds.quan(1, 'unitary'))
         norm      = np.array(norm)
         norm      = norm/np.linalg.norm(norm)
         zmin      = kwargs.get('zmin', None)
@@ -354,8 +372,12 @@ class spherical_data():
         set_cb    = kwargs.get('set_colorbar', True)
         show      = kwargs.get('img_show', True)
         plot_norm = kwargs.get('plot_norm', None)
+        clp_color = kwargs.get('clipping_color', None)
         p = yt.OffAxisProjectionPlot(ds, norm, field, center=center, width=width, north_vector=north)
         if cmap!=None:
+            if clp_color is not None:
+                cmap.set_bad(color=clp_color)
+                cmap.set_over(color=clp_color)
             p.set_cmap(field, cmap)
         p.set_xlabel(xlabel)
         p.set_ylabel(ylabel)
@@ -507,7 +529,7 @@ class spherical_data():
                 np.savez(field_file, **new_dict)
                 print(f'### Frame: {idx},  Add {f_names} in fields. ###')
         else:
-            raise SystemError(f"There is no fields: {f_names} in .dat files \nor \nthe numbers of the given f_vals not match that of the f_names")
+            raise ValueError(f"There is no fields: {f_names} in .dat files \nor \nthe numbers of the given f_vals not match that of the f_names")
 
     def brtp2bxyz(self, frame=0, save_path='default',**kwargs):
         save_path = os.path.join(self.folder,'bxyz') if save_path=='default' else save_path
@@ -558,8 +580,10 @@ class spherical_data():
         xi,yi,zi        = np.floor(idx).astype(int).T
         if len(np.shape(idx))<2:
             xf,yf,zf    = np.min([xi+1,n-1]), np.min([yi+1,n-1]), np.min([zi+1,n-1])
+            xi,yi,zi    = np.min([xi  ,n-1]), np.min([yi  ,n-1]), np.min([zi  ,n-1])
         else:
             xf,yf,zf    = np.where(xi+1<n-1,xi+1,n-1), np.where(yi+1<n-1,yi+1,n-1), np.where(zi+1<n-1,zi+1,n-1)
+            xi,yi,zi    = np.where(xi  <n-1,xi  ,n-1), np.where(yi  <n-1,yi  ,n-1), np.where(zi  <n-1,zi  ,n-1)
         xd,yd,zd        = (idx-np.floor(idx)).T
         if give_field is None:
             fields_file = os.path.join(self.fields_save_path,self.fields_file_name+str(frame).zfill(4)+'.npz')
@@ -568,9 +592,9 @@ class spherical_data():
         else:
             f           = give_field
         if idx.ndim>1:
-            xd              = xd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
-            yd              = yd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
-            zd              = zd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+            xd          = xd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+            yd          = yd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
+            zd          = zd[(slice(None),)+(np.newaxis,)*(f[xi,yi,zi].ndim-1)]
         ret             = f[xi,yi,zi]*(1-xd)*(1-yd)*(1-zd)+f[xf,yi,zi]*xd*(1-yd)*(1-zd)+f[xi,yf,zi]*(1-xd)*yd*(1-zd)+\
                           f[xi,yi,zf]*(1-xd)*(1-yd)*zd+f[xf,yf,zi]*xd*yd*(1-zd)+f[xf,yi,zf]*xd*(1-yd)*zd+\
                           f[xi,yf,zf]*(1-xd)*yd*zd+f[xf,yf,zf]*xd*yd*zd
@@ -723,6 +747,55 @@ class spherical_data():
 
     def _parallel_qsl(self, points, n_cores=10, print_interval=100, **kwargs):
         return parallel_QSL(self, points, n_cores=n_cores, print_interval=print_interval, **kwargs)
+
+    def proxy_emissivity(self, n_cores=10, print_interval=100, **kwargs):
+        frame       = kwargs.get('frame', 0)
+        bbox        = np.array(self.bbox)
+        bbox_cart   = self.bbox_cart
+        dxyz        = kwargs.get('dxyz', (bbox_cart[:,1]-bbox_cart[:,0])/self.n_car)
+        bxyz_file   = os.path.join(self.bxyz_path, 'bxyz_'+str(frame).zfill(4)+'.npy')
+        bxyz        = kwargs.get('bxyz',np.load(bxyz_file))
+        max_step    = kwargs.get('max_step', 10000)
+        PY          = kwargs.get('python', 'python')
+        dl          = kwargs.get('step_size',dxyz.min())
+        print('python:'+PY, flush=True)
+
+        r0          = bbox[0][0]+(bbox[0][1]-bbox[0][0])/self.n_sph
+        n           = self.n_sph
+        deg         = np.pi/180
+        r = np.array([r0])
+        t = np.linspace(bbox[1][0],bbox[1][1], n)*deg
+        p = np.linspace(bbox[2][0],bbox[2][1], n)*deg
+        R,T,P = np.meshgrid(r,t,p, indexing='ij')
+        Z = R*np.sin(T)
+        X = R*np.cos(T)*np.cos(P)
+        Y = R*np.cos(T)*np.sin(P)
+        points = np.stack([X.flatten(), Y.flatten(), Z.flatten()], axis=1)
+        x_sample, y_sample, z_sample, bbox_cart, bbox = self.load_xyz()
+        rb = bbox[0][0]+(bbox[0][1]-bbox[0][0])/self.n_sph*2
+        info_dict   = dict(bxyz=bxyz, dxyz=dxyz, points=points, X=x_sample, Y=y_sample, Z=z_sample, rb=rb,dl=dl)
+        self.save(output_name='instance_temp.pkl')
+        np.savez('proxy_emissivity_info.npz', **info_dict)
+        command     = PY+f" -u -m yt_tools.scripts.ProxyEmissivity -n {n_cores} --max_step {max_step} --n_print {print_interval} --geometry 'spherical'"
+        ret         = os.system(command)
+        if ret == 0:
+            print("Command executed successfully")
+        else:
+            print(f"Command failed with exit code {ret}")
+        proxy_emissivity = np.load('./proxy_emissivity_temp.npy')
+        index = self.get_field(fnames='index', frame=frame)
+        outside = index<0
+        proxy_emissivity[ outside] =0
+        proxy_emissivity[~outside]+=1e-20
+        os.remove('./proxy_emissivity_temp.npy')
+        os.remove('./proxy_emissivity_info.npz')
+        os.remove('instance_temp.pkl')
+        return proxy_emissivity
+
+    def add_proxy_emissivity(self, n_cores=10, print_interval=100, **kwargs):
+        frame=kwargs.get('frame',0)
+        proxy_emissivity = self.proxy_emissivity(n_cores=n_cores, print_interval=print_interval, **kwargs)
+        self.add_field(f_names=['proxy_emissivity'],  frame=frame, f_vals=[proxy_emissivity])
 
     # def calculate_qsl_range(self, start_idx, end_idx, boundary_points, progress_list, total_tasks, lock, print_interval=100, t0=0, r_min=1.01):
     #     return calculate_qsl_range(self, start_idx, end_idx, boundary_points, progress_list, total_tasks, lock, print_interval=print_interval, t0=t0, r_min=r_min)
