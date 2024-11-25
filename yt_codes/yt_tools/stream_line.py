@@ -187,6 +187,62 @@ def rk45(rfun, x, dl, **kwargs):
     return ret
 
 class Spherical_magline():
+    """
+    Spherical_magline
+
+    This class is used to compute magnetic field lines in spherical coordinates (r, t, p). It performs 3D interpolation of the magnetic field data and integrates the field lines using the Runge-Kutta 45 (RK45) method.
+
+    Methods:
+    --------
+    __init__(self, Brtp, rtp, **kwargs)
+        Initializes the Spherical_magline class.
+
+    Parameters:
+    -----------
+    Brtp : numpy.ndarray
+        4D array of shape (N, M, L, 3) representing the magnetic field strength in spherical coordinates.
+        - N, M, L: Number of grid points in the r, t, and p directions, respectively.
+        - 3: Magnetic field components in the r, t, and p directions.
+    rtp : numpy.ndarray
+        4D array of shape (N, M, L, 3) representing the grid points in spherical coordinates.
+        - N, M, L: Number of grid points in the r, t, and p directions, respectively.
+        - 3: r (radius), t (polar angle), and p (azimuthal angle) coordinates.
+    **kwargs : dict
+        Additional parameters for the initialization.
+        - step_length : float, optional
+            Step length for the integration (default is the difference between the first and second grid points in the r direction).
+        - max_steps : int, optional
+            Maximum number of integration steps (default is 100000).
+        - Rmin : float, optional
+            Minimum radius for the integration (default is the minimum value in the rtp array).
+        - Rmax : float, optional
+            Maximum radius for the integration (default is the maximum value in the rtp array).
+
+    Methods:
+    --------
+    rtp2idx(self, rtp)
+        Converts spherical coordinates to grid indices.
+    get_B(self, rtp)
+        Interpolates the magnetic field at the given spherical coordinates.
+    integrate_field_line(self, start_point)
+        Integrates the magnetic field line starting from the given spherical coordinates using the RK45 method.
+
+    Example:
+    --------
+    >>> import numpy as np
+    >>> r = np.linspace(0, 1, 10)
+    >>> t = np.linspace(0, np.pi, 10)
+    >>> p = np.linspace(0, 2 * np.pi, 10)
+    >>> R, T, P = np.meshgrid(r, t, p, indexing='ij')
+    >>> Br = np.sin(R) * np.cos(T) * np.cos(P)
+    >>> Bt = np.cos(R) * np.sin(T) * np.sin(P)
+    >>> Bp = np.cos(R) * np.cos(T) * np.sin(P)
+    >>> Brtp = np.array([Br, Bt, Bp]).transpose((1, 2, 3, 0))
+    >>> rtp = np.array([R, T, P]).transpose((1, 2, 3, 0))
+    >>> spherical_magline = Spherical_magline(Brtp, rtp)
+    >>> start_point = [1.0, np.pi/2, np.pi]
+    >>> magline = spherical_magline.magline_solver(start_point)
+    """
     def __init__(self, Brtp, rtp, **kwargs):
         self.Brtp = Brtp
         self.rtp  = rtp
