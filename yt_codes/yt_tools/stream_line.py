@@ -257,7 +257,7 @@ class Spherical_magline():
         r ,t ,p  = rtp
         r0,t0,p0 = self.rtp[ 0, 0, 0]
         dr,dt,dp = self.drtp
-        irtp     = np.stack([(r-r0)/dt,(t-t0)/dt,(p-p0)/dp], axis=-1)
+        irtp     = np.stack([(r-r0)/dr,(t-t0)/dt,(p-p0)/dp], axis=-1)
         return irtp
 
     def get_Brtp(self, rtp, **kwargs):
@@ -287,6 +287,19 @@ class Spherical_magline():
         # forward integral
         for i in range(Ns):
             if rtp0[0]<Rl or rtp0[0]>Ru or np.any(np.isnan(rtp0)):
+                rtp0 = forward[-2]
+                kk   = self.stepper(rtp0)
+                dl1  = (Rl-rtp0[0])/kk[0]
+                dl1  = 1e4 if dl1<0 else dl1
+                dl2  = (Ru-rtp0[0])/kk[0]
+                dl2  = 1e4 if dl2<0 else dl2
+                dl0  = np.min([dl1,dl2])
+                rtp0 = rtp0+dl0*kk
+                if dl1<dl2:
+                    rtp0[0]=Rl
+                else:
+                    rtp0[0]=Ru
+                forward[-1]=rtp0
                 break
             rtp0 = rk45(self.stepper, rtp0, dl, sig= 1)
             forward.append(rtp0)
@@ -294,6 +307,19 @@ class Spherical_magline():
         rtp0 = rtp
         for i in range(Ns):
             if rtp0[0]<Rl or rtp0[0]>Ru or np.any(np.isnan(rtp0)):
+                rtp0 = backward[-2]
+                kk   = self.stepper(rtp0)
+                dl1  = (Rl-rtp0[0])/kk[0]*(-1)
+                dl1  = 1e4 if dl1<0 else dl1
+                dl2  = (Ru-rtp0[0])/kk[0]*(-1)
+                dl2  = 1e4 if dl2<0 else dl2
+                dl0  = np.min([dl1,dl2])
+                rtp0 = rtp0-kk*dl0
+                if dl1<dl2:
+                    rtp0[0]=Rl
+                else:
+                    rtp0[0]=Ru
+                backward[-1]=rtp0
                 break
             rtp0 = rk45(self.stepper, rtp0, dl, sig=-1)
             backward.append(rtp0)
