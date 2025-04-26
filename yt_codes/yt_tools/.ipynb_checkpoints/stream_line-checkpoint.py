@@ -275,7 +275,7 @@ class Spherical_magline():
         if Bn<eps:
             return np.full(3,np.nan)
         Bhat  = Brtp/np.linalg.norm(Brtp, axis=0)
-        ret   = Bhat/np.array([1,r,r*np.sin(np.maximum(t,1e-10))])
+        ret   = Bhat/np.array([1,r,r*np.sin(t)])
         return ret
 
     def single_task(self, rtp, dl, Ns):
@@ -375,7 +375,7 @@ class Spherical_magline():
             magline_res = []
             for rtp in rtps:
                 imagline = self.single_task(rtp, dl, Ns)
-                magline_res.append(imagline)
+                magline_res.extend(imagline)
             print(f'Time Used: {(time.time()-t0)/60:8.3f} min')
             return magline_res
 

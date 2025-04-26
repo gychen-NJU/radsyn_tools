@@ -6,7 +6,6 @@ import glob
 import re
 import os
 import time
-import warnings
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import Manager, Value, Lock
@@ -15,18 +14,12 @@ from ..yt_spherical_3D import spherical_data
 from .. import geometry
 from ..stream_line import field_line, trilinear_interpolation
 
-
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-
-# with warnings.catch_warnings():
-#     warnings.simplefilter("ignore", RuntimeWarning)
-
 def ProxyEmissivity_Process_Cartesian(start_idx, end_idx, points, progress_list, lock, print_interval=100, t0=0, max_steps=10000):
     res_list = []
     for idx in range(start_idx, end_idx):
         point = points[idx]
         npoints = len(points)
-        fline = field_line(bxyz, point, dxyz=dxyz, max_step=max_steps)
+        fline = field_line(bxyz, point, dxyz=dxyz, max_step=max_step)
         is_skip = len(fline)<2 or (fline[0,2]>2) or (fline[-1,2]>2)
         if is_skip:
             with lock:
@@ -88,7 +81,7 @@ def parallel_ProxyEmissivity_Cartesian(points, n_cores=10, print_interval=100, m
         for i in range(n_cores):
             start_idx = i * chunk_size
             end_idx = (i + 1) * chunk_size if i < n_cores - 1 else n_points
-            futures.append(executor.submit(ProxyEmissivity_Process_Cartesian, start_idx, end_idx, points, progress_list, lock, print_interval, t0, max_steps))
+            futures.append(executor.submit(ProxyEmissivity_Process_Cartesian, start_idx, end_idx, points, progress_list, lock, print_interval, t0, max_step))
 
         print('Assigning task OK', flush=True)
         for future in as_completed(futures):

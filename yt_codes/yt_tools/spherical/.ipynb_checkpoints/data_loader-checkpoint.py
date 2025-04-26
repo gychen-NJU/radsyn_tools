@@ -139,38 +139,6 @@ class spherical_data():
         return ret
 
     def parallel_qsl(self, points, **kwargs):
-        """
-        Compute parallel Quasi-Separatrix Layers (QSL).
-
-        Parameters:
-        ----
-        points: np.ndarray （N,3)
-            Coordinates of the points for which QSL needs to be computed.
-        step_length: float, optional
-            The step length, default is self.drtp[0]*4.
-        max_steps: int, optional
-            The maximum number of steps, default is 100000.
-        frame: int, optional
-            The frame number, default is 0.
-        n_cores: int, optional
-            The number of cores to use, default is 50.
-        print_interval: int, optional
-            The interval for printing progress, default is 10000.
-        python: str, optional
-            The Python command to use, default is 'python'.
-        save_name: str, optional
-            The name of the file to save, default is 'sph_temp.pkl'.
-
-        Note:
-        ----
-        The code is based on the script 'spherical_qsl.py' in the 'scripts' folder.
-        self.info['frame_xxxx']['cal_qsl_setting'] will record the setting of the QSL computation.
-
-        Returns:
-        ----
-        np.ndarray
-            The computed QSL data. (N,2), including the logQ and lengths
-        """
         dl    = kwargs.get('step_length', self.drtp[0]*4)
         Ns    = kwargs.get('max_steps', 100000)
         frame = kwargs.get('frame', 0)
@@ -197,9 +165,9 @@ class spherical_data():
             os.remove('spherical_qsl.npy')
             return ret
 
-    def get_magline(self, usr_rtp, **kwargs):
-        Brtp = self.get_Brtp(**kwargs).transpose(1,2,3,0)
-        rtp  = self.get_rtp(**kwargs).transpose(1,2,3,0)
+    def get_magline(self, rtp, **kwargs):
+        Brtp = self.get_Brtp()
+        rtp  = self.get_rtp()
         sm   = Spherical_magline(Brtp, rtp, **kwargs)
-        ret  = sm.magline_solver(usr_rtp, **kwargs)
+        ret  = sm.magline_solver(rtp, **kwargs)
         return ret
