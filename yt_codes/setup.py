@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='yt_tools',
-    version='2.0.0',
+    version='1.1.1',
     packages=find_packages(),
     include_package_data=True,  # 这确保包数据被包括在安装中
     package_data={
@@ -20,8 +20,6 @@ setup(
         'scipy>=1.5.0',   
         'aglio>=0.2.0',
         'vtk>=9.3.0',
-        'plotly>=5.20.0',
-        'sunpy>=5.0.0',
-        'pyevtk>1.0.0'
+        'plotly>=5.20.0'
     ],
 )
