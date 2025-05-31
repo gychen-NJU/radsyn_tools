@@ -111,7 +111,7 @@ class cartesian_data():
         by       = region['b2']
         bz       = region['b3']
         bxyz     = np.stack([bx,by,bz], axis=0)
-        return np.array(bxyz)
+        return np.array(bxyz),dxyz
 
     def proxy_emissivity(self, sample_level=1, frame=0, **kwargs):
         n_cores        = kwargs.get('n_cores', 10)
