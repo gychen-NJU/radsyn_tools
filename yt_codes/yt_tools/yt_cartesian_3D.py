@@ -117,7 +117,8 @@ class cartesian_data():
         n_cores        = kwargs.get('n_cores', 10)
         max_step       = kwargs.get('max_step', 10000)
         print_interval = kwargs.get('print_interval', 100)
-        bxyz, dxyz = self.return_bxyz(sample_level, frame)
+        dxyz = self.dxyz
+        bxyz = self.return_bxyz(sample_level, frame)
         coords   = 'cartesian'
         nx,ny,nz = self.dimensions*sample_level
         x = np.arange(nx)
